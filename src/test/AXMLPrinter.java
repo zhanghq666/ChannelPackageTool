@@ -30,13 +30,16 @@ import android.util.TypedValue;
 public class AXMLPrinter {
 
 	public static void main(String[] arguments) {
-		if (arguments.length<1) {
-			log("Usage: AXMLPrinter <binary xml file>");
-			return;
-		}
+//		if (arguments.length<1) {
+//			log("Usage: AXMLPrinter <binary xml file>");
+//			return;
+//		}
+		String manifestPath = "D:\\ToolTest\\AndroidManifest.xml.origin";
+//		String manifestPath = "D:\\ToolTest\\sample_legu\\AndroidManifest.xml";
 		try {
 			AXmlResourceParser parser=new AXmlResourceParser();
-			parser.open(new FileInputStream(arguments[0]));
+			parser.open(new FileInputStream(manifestPath));
+//			parser.open(new FileInputStream(arguments[0]));
 			StringBuilder indent=new StringBuilder(10);
 			final String indentStep="	";
 			while (true) {

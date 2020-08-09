@@ -17,13 +17,20 @@ import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
 
 public class Utils {
-    public static void zip(String inputDir, String outputPath) throws Exception {
+    public static void zip(String inputDir, String outputPath, boolean wrapDir) throws Exception {
         //创建zip输出流
         ZipOutputStream out = new ZipOutputStream(new FileOutputStream(outputPath));
         //创建缓冲输出流
         BufferedOutputStream bos = new BufferedOutputStream(out);
         File input = new File(inputDir);
-        compress(out, bos, input, null);
+        if (input.isFile() || wrapDir) {
+            compress(out, bos, input, null);
+        } else {
+            for (File file :
+                    input.listFiles()) {
+                compress(out, bos, file, file.getName());
+            }
+        }
         bos.close();
         out.close();
     }
@@ -53,16 +60,17 @@ public class Utils {
         } else//如果不是目录（文件夹），即为文件，则先写入目录进入点，之后将文件写入zip文件中
         {
             out.putNextEntry(new ZipEntry(name));
-            FileInputStream fos = new FileInputStream(input);
-            BufferedInputStream bis = new BufferedInputStream(fos);
+            FileInputStream fis = new FileInputStream(input);
+            BufferedInputStream bis = new BufferedInputStream(fis);
             int len;
             //将源文件写入到zip文件中
             byte[] buf = new byte[1024];
             while ((len = bis.read(buf)) != -1) {
                 bos.write(buf, 0, len);
             }
+            bos.flush();
             bis.close();
-            fos.close();
+            fis.close();
         }
     }
 
@@ -72,6 +80,11 @@ public class Utils {
         if (!srcFile.exists()) {
             throw new Exception(srcFile.getPath() + "所指文件不存在");
         }
+        File outFile = new File(outputDir);
+        if (outFile.exists()) {
+            deleteFile(outFile);
+        }
+
         ZipFile zipFile = new ZipFile(srcFile);//创建压缩文件对象
         //开始解压
         Enumeration<?> entries = zipFile.entries();
@@ -80,7 +93,7 @@ public class Utils {
             // 如果是文件夹，就创建个文件夹
             if (entry.isDirectory()) {
                 String dirPath = outputDir + "/" + entry.getName();
-                srcFile.mkdirs();
+                new File(dirPath).mkdirs();
             } else {
                 // 如果是文件，就先创建一个文件，然后用io流把内容copy过去
                 File targetFile = new File(outputDir + "/" + entry.getName());
@@ -106,29 +119,51 @@ public class Utils {
 
 
     public static void modifyMetaData(String xmlPath, String valueMask, String valueReal) {
-        int maskOffset = findOffset(xmlPath, valueMask);
-//if (1==1)
-//    return;
-        String originPath = xmlPath + ".origin";
-        File originFile = new File(originPath);
-        if (!originFile.exists()) {
-            new File(xmlPath).renameTo(originFile);
+        boolean success = false;
+
+        File originXml = new File(xmlPath);
+        String originBackupPath = originXml.getParentFile().getParent() + File.separator + originXml.getName() + ".origin";
+        File originFileBackup = new File(originBackupPath);
+        if (originFileBackup.exists()) {
+            success = originFileBackup.delete();
+        }
+        if (success && moveFile(xmlPath, originBackupPath)) {
+            success = originXml.delete();
         }
 
+        if (!success) {
+            System.out.println("xml备份出错, 终止执行！");
+            return;
+        }
+        System.out.println("xml备份完毕");
+
+        int maskOffset = findOffset(originBackupPath, valueMask);
+        System.out.println("found mask offset " + maskOffset);
+        if (maskOffset <= 0) {
+            return;
+        }
+
+        System.out.println("开始修改xml");
+
+        System.out.println("for " + valueReal);
         FileInputStream fis = null;
         FileOutputStream fos = null;
         try {
-            fis = new FileInputStream(originPath);
+            fis = new FileInputStream(originFileBackup);
             fos = new FileOutputStream(xmlPath);
 
             byte[] bytes = new byte[1];
             int offset = 0;
             while (fis.read(bytes) != -1) {
                 if (maskOffset == offset) {
-                    fos.write(valueReal.getBytes());
+                    int valueRealInt = Integer.parseInt(valueReal);
+                    byte[] valueB = intToByteArray(valueRealInt);
+                    fos.write(valueB);
+                    fis.skip(valueB.length - 1);
                 } else {
                     fos.write(bytes);
                 }
+                offset++;
             }
         } catch (Exception e) {
             e.printStackTrace();
@@ -149,60 +184,153 @@ public class Utils {
         System.out.println("modifyMetaData done!");
     }
 
+    private static boolean moveFile(String source, String dest) {
+        boolean success = false;
+        if (!new File(source).exists()) {
+            return false;
+        }
+        File destFile = new File(dest);
+        if (destFile.exists()) {
+            destFile.delete();
+        }
+
+        FileInputStream fis = null;
+        FileOutputStream fos = null;
+        try {
+            fis = new FileInputStream(source);
+            fos = new FileOutputStream(dest);
+
+            byte[] bytes = new byte[1024];
+            int length = 0;
+            while ((length = fis.read(bytes)) != -1) {
+                fos.write(bytes, 0, length);
+            }
+            success = true;
+        } catch (Exception e) {
+            e.printStackTrace();
+            success = false;
+        } finally {
+            try {
+                if (fis != null) {
+                    fis.close();
+                }
+                if (fos != null) {
+                    fos.flush();
+                    fos.close();
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+        return success;
+    }
+
     /**
      * 找到目的属性值得偏移字节量
+     *
      * @param manifestPath
      * @param valueMask
      * @return
      */
-    private static int findOffset(String manifestPath, String valueMask) {
+    public static int findOffset(String manifestPath, String valueMask) {
         int offsetTotal = -1;
         FileInputStream fis = null;
         try {
             fis = new FileInputStream(manifestPath);
-        } catch (FileNotFoundException e) {
+            System.out.println("file total length:" + fis.available());
+        } catch (Exception e) {
             e.printStackTrace();
             return offsetTotal;
         }
 
-        AXmlResourceParser parser = new AXmlResourceParser();
-        parser.open(fis);
+
         boolean foundTarget = false;
         int eventType = -1;
-        while (true) {
-            try {
+        AXmlResourceParser parser = new AXmlResourceParser();
+        try {
+            parser.open(fis);
+            while (true) {
                 eventType = parser.next();
-                if ("meta-data".equals(parser.getName()) && parser.getAttributeCount() > 0) {
+                if (eventType == XmlPullParser.END_DOCUMENT) {
+                    break;
+                }
+                if (eventType == XmlPullParser.START_TAG && "meta-data".equals(parser.getName()) && parser.getAttributeCount() > 0) {
                     for (int i = 0; i < parser.getAttributeCount(); i++) {
                         if (valueMask.equals(parser.getAttributeValue(i))) {
-                            // ATTRIBUTE_LENGTH为5
-                            offsetTotal = parser.getCurrentOffset() - (parser.getAttributeCount() - i) * 5 + 4;
                             foundTarget = true;
                             System.out.println(parser.getAttributeValue(i) + ":");
 
-                            int valueType = parser.getAttributeValueType(i + 1);
+                            int valueIndex = i + 1;
+                            int valueType = parser.getAttributeValueType(valueIndex);
                             if (valueType >= TypedValue.TYPE_FIRST_INT &&
                                     valueType <= TypedValue.TYPE_LAST_INT) {
-                                System.out.println(parser.getAttributeIntValue(i + 1, -1));
+                                // ATTRIBUTE_LENGTH为5
+                                // 计算目标AttributeValue在整个文档中的偏移量
+                                // 偏移量 = 当前已读取的字节数 - ((属性倒序位置 * 每个属性所占Int数) - 属性值所在位置) * Int类型字节数
+                                offsetTotal = parser.getCurrentOffset() - ((parser.getAttributeCount() - valueIndex) * 5 - 4) * 4;
+
+                                System.out.println(parser.getAttributeIntValue(valueIndex, -1));
                             } else {
                                 System.out.println("不支持的值类型！！！");
                             }
                             break;
                         }
                     }
-                }
 
-                if (parser.getEventType() == XmlPullParser.END_DOCUMENT) {
-                    break;
+                    if (foundTarget) {
+                        break;
+                    }
                 }
-            } catch (Exception e) {
-                e.printStackTrace();
             }
-        }
-        if (eventType != XmlPullParser.END_DOCUMENT) {
-            parser.close();
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            if (foundTarget || eventType == XmlPullParser.END_DOCUMENT) {
+                parser.close();
+            }
         }
 
         return offsetTotal;
+    }
+
+    /**
+     * @param i
+     * @return
+     */
+    public static byte[] intToByteArray(int i) {
+        return intToByteArray(i, false);
+    }
+
+    public static byte[] intToByteArray(int i, boolean isBigEndian) {
+        byte[] result = new byte[4];
+        if (isBigEndian) {
+            result[0] = (byte) ((i >> 24) & 0xFF);
+            result[1] = (byte) ((i >> 16) & 0xFF);
+            result[2] = (byte) ((i >> 8) & 0xFF);
+            result[3] = (byte) (i & 0xFF);
+        } else {
+            result[0] = (byte) (i & 0xFF);
+            result[1] = (byte) ((i >> 8) & 0xFF);
+            result[2] = (byte) ((i >> 16) & 0xFF);
+            result[3] = (byte) ((i >> 24) & 0xFF);
+        }
+        return result;
+
+    }
+
+    public static boolean deleteFile(File fileRoot) {
+        boolean success = false;
+        if (fileRoot.isDirectory()) {
+            if (fileRoot.listFiles() != null) {
+                for (File file : fileRoot.listFiles()) {
+                    deleteFile(file);
+                }
+            }
+            success = fileRoot.delete();
+        } else {
+            success = fileRoot.delete();
+        }
+        return success;
     }
 }

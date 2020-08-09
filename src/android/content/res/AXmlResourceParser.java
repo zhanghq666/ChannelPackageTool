@@ -872,9 +872,9 @@ public class AXmlResourceParser implements XmlResourceParser {
 				m_classAttribute=(m_classAttribute & 0xFFFF)-1;
 				m_attributes=m_reader.readIntArray(attributeCount*ATTRIBUTE_LENGHT);
 				m_currentTimeReadedLength += 4 * attributeCount*ATTRIBUTE_LENGHT;
-				for (int i=ATTRIBUTE_IX_VALUE_TYPE;i<m_attributes.length;) {
-					m_attributes[i]=(m_attributes[i]>>>24);
-					i+=ATTRIBUTE_LENGHT;
+				for (int i = ATTRIBUTE_IX_VALUE_TYPE; i < m_attributes.length; ) {
+					m_attributes[i] = (m_attributes[i] >>> 24);
+					i += ATTRIBUTE_LENGHT;
 				}
 				m_namespaces.increaseDepth();
 				m_event=START_TAG;

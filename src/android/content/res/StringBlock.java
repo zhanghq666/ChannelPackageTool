@@ -34,27 +34,27 @@ public class StringBlock {
 	 */
 	public static StringBlock read(IntReader reader) throws IOException {
 		ChunkUtil.readCheckType(reader,CHUNK_TYPE);
-		int chunkSize=reader.readInt();
+		int chunkOffset=reader.readInt();
 		int stringCount=reader.readInt();
-		int styleOffsetCount=reader.readInt();
+		int styleOffset=reader.readInt();
 		/*?*/reader.readInt();
 		int stringsOffset=reader.readInt();
 		int stylesOffset=reader.readInt();
 		
 		StringBlock block=new StringBlock();
 		block.m_stringOffsets=reader.readIntArray(stringCount);
-		if (styleOffsetCount!=0) {
-			block.m_styleOffsets=reader.readIntArray(styleOffsetCount);
+		if (styleOffset!=0) {
+			block.m_styleOffsets=reader.readIntArray(styleOffset);
 		}
 		{
-			int size=((stylesOffset==0)?chunkSize:stylesOffset)-stringsOffset;
+			int size=((stylesOffset==0)?chunkOffset:stylesOffset)-stringsOffset;
 			if ((size%4)!=0) {
 				throw new IOException("String data size is not multiple of 4 ("+size+").");
 			}
 			block.m_strings=reader.readIntArray(size/4);
 		}
 		if (stylesOffset!=0) {
-			int size=(chunkSize-stylesOffset);
+			int size=(chunkOffset-stylesOffset);
 			if ((size%4)!=0) {
 				throw new IOException("Style data size is not multiple of 4 ("+size+").");
 			}
