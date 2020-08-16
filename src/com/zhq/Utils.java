@@ -11,6 +11,7 @@ import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.*;
 import java.util.Enumeration;
+import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import java.util.zip.ZipInputStream;
@@ -118,7 +119,7 @@ public class Utils {
     }
 
 
-    public static void modifyMetaData(String xmlPath, String valueMask, String valueReal) {
+    public static boolean modifyMetaData(String xmlPath, String valueMask, String valueReal) {
         boolean success = false;
 
         File originXml = new File(xmlPath);
@@ -126,6 +127,8 @@ public class Utils {
         File originFileBackup = new File(originBackupPath);
         if (originFileBackup.exists()) {
             success = originFileBackup.delete();
+        } else {
+            success = true;
         }
         if (success && moveFile(xmlPath, originBackupPath)) {
             success = originXml.delete();
@@ -133,14 +136,14 @@ public class Utils {
 
         if (!success) {
             System.out.println("xml备份出错, 终止执行！");
-            return;
+            return false;
         }
         System.out.println("xml备份完毕");
 
         int maskOffset = findOffset(originBackupPath, valueMask);
         System.out.println("found mask offset " + maskOffset);
         if (maskOffset <= 0) {
-            return;
+            return false;
         }
 
         System.out.println("开始修改xml");
@@ -167,6 +170,7 @@ public class Utils {
             }
         } catch (Exception e) {
             e.printStackTrace();
+            return false;
         } finally {
             try {
                 if (fis != null) {
@@ -182,6 +186,7 @@ public class Utils {
         }
 
         System.out.println("modifyMetaData done!");
+        return true;
     }
 
     private static boolean moveFile(String source, String dest) {
@@ -210,17 +215,8 @@ public class Utils {
             e.printStackTrace();
             success = false;
         } finally {
-            try {
-                if (fis != null) {
-                    fis.close();
-                }
-                if (fos != null) {
-                    fos.flush();
-                    fos.close();
-                }
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
+            closeStreamSilence(fis);
+            closeStreamSilence(fos);
         }
         return success;
     }
@@ -332,5 +328,82 @@ public class Utils {
             success = fileRoot.delete();
         }
         return success;
+    }
+
+    public static void signApk(String apkPath) {
+        if (!new File(apkPath).exists()) {
+            System.out.println("待签名文件不存在");
+            return;
+        }
+
+        Runtime runtime = Runtime.getRuntime();
+        String signedName = getFileRawName(apkPath) + "_signed" + getFileExtName(apkPath);
+        BufferedInputStream bis = null;
+        try {
+            String cmd = String.format("jarsigner -verbose -signedjar %s " +
+                    " %s -keystore %s -keypass %s -storepass %s %s",
+                    signedName, apkPath,"jk.keystore", "jk123456","jk123456", "jkclinic");
+            System.out.println(cmd);
+            Process process = runtime.exec(cmd);
+
+            bis = new BufferedInputStream(process.getInputStream());
+            while (bis.read() != -1) {
+                System.out.println(bis.read());
+            }
+            process.waitFor();
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            closeStreamSilence(bis);
+        }
+    }
+
+    public static void alignApk(String apkPath) {
+
+    }
+
+    public static String getFileRawName(String path) {
+        String rawName = path;
+        if (path != null) {
+            int index = path.lastIndexOf(".");
+            if (index > 0) {
+                rawName = path.substring(0, index);
+            }
+        }
+
+        return rawName;
+    }
+    public static String getFileExtName(String path) {
+        String extName = null;
+        if (path != null) {
+            int index = path.lastIndexOf(".");
+            if (index > 0) {
+                extName = path.substring(index);
+            }
+        }
+
+        return extName;
+    }
+
+    public static void closeStreamSilence(InputStream s) {
+        if (s != null) {
+            try {
+                s.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    public static void closeStreamSilence(OutputStream s) {
+        if (s != null) {
+            try {
+                s.flush();
+                s.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
     }
 }
