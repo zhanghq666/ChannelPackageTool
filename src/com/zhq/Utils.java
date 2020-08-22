@@ -2,19 +2,14 @@ package com.zhq;
 
 import android.content.res.AXmlResourceParser;
 import android.util.TypedValue;
-import org.w3c.dom.Document;
-import org.w3c.dom.Element;
-import org.w3c.dom.NodeList;
 import org.xmlpull.v1.XmlPullParser;
 
-import javax.xml.parsers.DocumentBuilder;
-import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.*;
+import java.util.ArrayList;
 import java.util.Enumeration;
-import java.util.stream.Stream;
+import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
-import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
 
 public class Utils {
@@ -39,7 +34,6 @@ public class Utils {
     /**
      * @param name 压缩文件名，可以写为null保持默认
      */
-    //递归压缩
     private static void compress(ZipOutputStream out, BufferedOutputStream bos, File input, String name) throws IOException {
         if (name == null) {
             name = input.getName();
@@ -118,33 +112,54 @@ public class Utils {
         }
     }
 
-
-    public static boolean modifyMetaData(String xmlPath, String valueMask, String valueReal) {
-        boolean success = false;
-
-        File originXml = new File(xmlPath);
-        String originBackupPath = originXml.getParentFile().getParent() + File.separator + originXml.getName() + ".origin";
-        File originFileBackup = new File(originBackupPath);
-        if (originFileBackup.exists()) {
-            success = originFileBackup.delete();
-        } else {
-            success = true;
-        }
-        if (success && moveFile(xmlPath, originBackupPath)) {
-            success = originXml.delete();
+    public static String doShield(String apkPath, ToolConfig toolConfig) {
+        if (!new File(apkPath).exists()) {
+            System.out.println("待加固文件不存在");
+            return null;
         }
 
-        if (!success) {
-            System.out.println("xml备份出错, 终止执行！");
-            return false;
-        }
-        System.out.println("xml备份完毕");
+        Runtime runtime = Runtime.getRuntime();
 
-        int maskOffset = findOffset(originBackupPath, valueMask);
-        System.out.println("found mask offset " + maskOffset);
-        if (maskOffset <= 0) {
-            return false;
+        String shieldedApkPath = getFileRawNameWithPath(apkPath) + "_legu" + getFileExtName(apkPath);
+        BufferedInputStream bis = null;
+        try {
+            String path = Utils.class.getProtectionDomain().getCodeSource().getLocation().getPath();
+            if (path.startsWith("/")) {
+                path = path.substring(1);
+            }
+            String jarPath = new File(path).getParent() + File.separator + "libs" + File.separator + "ms-shield.jar";
+            String cmd = String.format("java -Dfile.encoding=utf-8 -jar %s -sid %s -skey %s -uploadPath %s -downloadPath %s",
+                    jarPath, toolConfig.getTencentSid(), toolConfig.getTencentSkey(), apkPath, new File(apkPath).getParent());
+            if (toolConfig.isShowDetailLog()) {
+                System.out.println("ms-shield command:" + cmd);
+            }
+            Process process = runtime.exec(cmd);
+
+            bis = new BufferedInputStream(process.getInputStream());
+            byte[] bytes = new byte[1024];
+            int length = -1;
+            while ((length = bis.read(bytes)) != -1) {
+                System.out.print(new String(bytes, 0, length, "utf-8"));
+            }
+            process.waitFor();
+            if (process.exitValue() == 0) {
+                System.out.println("ms-shield执行成功");
+
+                return shieldedApkPath;
+            } else {
+                System.out.println("ms-shield执行失败");
+
+                return null;
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
+        } finally {
+            closeStreamSilence(bis);
         }
+    }
+
+    public static boolean modifyMetaData(String backupFilePath, String outputFilePath, int maskOffset, String valueReal) {
 
         System.out.println("开始修改xml");
 
@@ -152,8 +167,8 @@ public class Utils {
         FileInputStream fis = null;
         FileOutputStream fos = null;
         try {
-            fis = new FileInputStream(originFileBackup);
-            fos = new FileOutputStream(xmlPath);
+            fis = new FileInputStream(backupFilePath);
+            fos = new FileOutputStream(outputFilePath);
 
             byte[] bytes = new byte[1];
             int offset = 0;
@@ -185,8 +200,25 @@ public class Utils {
             }
         }
 
-        System.out.println("modifyMetaData done!");
+        System.out.println("修改完毕");
         return true;
+    }
+
+    public static boolean backupManifest(String xmlPath, File originXml, String originBackupPath) {
+        boolean success = false;
+        if (new File(originBackupPath).exists()) {
+            new File(originBackupPath).delete();
+        }
+        if (moveFile(xmlPath, originBackupPath)) {
+            success = originXml.delete();
+        }
+
+        if (!success) {
+            System.out.println("xml备份出错, 终止执行！");
+        } else {
+            System.out.println("xml备份完毕");
+        }
+        return success;
     }
 
     private static boolean moveFile(String source, String dest) {
@@ -330,40 +362,223 @@ public class Utils {
         return success;
     }
 
-    public static void signApk(String apkPath) {
+    public static ToolConfig parseToolConfig(String configPath) {
+        ToolConfig config = new ToolConfig();
+        FileReader reader = null;
+        BufferedReader bufferedReader = null;
+        try {
+            reader = new FileReader(configPath);
+            bufferedReader = new BufferedReader(reader);
+            String line;
+            while ((line = bufferedReader.readLine()) != null) {
+                String[] cline = line.split("=");
+                if (cline.length == 2) {
+                    if (cline[0] != null) {
+                        cline[0] = cline[0].trim();
+                    }
+                    if (cline[1] != null) {
+                        cline[1] = cline[1].trim();
+                    }
+                    String key = cline[0];
+                    switch (key) {
+                        case "TencentSid":
+                            config.setTencentSid(cline[1]);
+                            break;
+                        case "TencentSkey":
+                            config.setTencentSkey(cline[1]);
+                            break;
+                        case "KeystoreFilePath":
+                            config.setKeystoreFilePath(cline[1]);
+                            break;
+                        case "KeyPassword":
+                            config.setKeyPassword(cline[1]);
+                            break;
+                        case "StorePassword":
+                            config.setStorePassword(cline[1]);
+                            break;
+                        case "KeyAlias":
+                            config.setKeyAlias(cline[1]);
+                            break;
+                        case "TargetApkPath":
+                            config.setTargetApkPath(cline[1]);
+                            break;
+                        case "ChannelConfigPath":
+                            config.setChannelConfigPath(cline[1]);
+                            break;
+                        case "ChannelMask":
+                            config.setChannelMask(cline[1]);
+                            break;
+                    }
+                }
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        } finally {
+            Utils.closeReaderSilence(reader);
+            Utils.closeReaderSilence(bufferedReader);
+        }
+
+        return config;
+    }
+
+    public static List<ChannelConfig> parseChannelConfig(String configPath) {
+        ArrayList<ChannelConfig> channelConfigs = new ArrayList<>();
+        FileReader reader = null;
+        BufferedReader bufferedReader = null;
+        try {
+            reader = new FileReader(configPath);
+            bufferedReader = new BufferedReader(reader);
+            String line;
+            while ((line = bufferedReader.readLine()) != null) {
+                String[] cline = line.split(",");
+                if (cline.length >= 2) {
+                    if (cline[0] != null) {
+                        cline[0] = cline[0].trim();
+                    }
+                    if (cline[1] != null) {
+                        cline[1] = cline[1].trim();
+                    }
+
+                    ChannelConfig config = new ChannelConfig();
+                    config.setNameIdentify(cline[0]);
+                    config.setValue(cline[1]);
+                    channelConfigs.add(config);
+                }
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        } finally {
+            Utils.closeReaderSilence(reader);
+            Utils.closeReaderSilence(bufferedReader);
+        }
+
+        return channelConfigs;
+    }
+
+    public static String signApk(String apkPath, ToolConfig config) {
         if (!new File(apkPath).exists()) {
             System.out.println("待签名文件不存在");
-            return;
+            return null;
         }
 
         Runtime runtime = Runtime.getRuntime();
-        String signedName = getFileRawName(apkPath) + "_signed" + getFileExtName(apkPath);
+        String signedApkPath = getFileRawNameWithPath(apkPath) + "_signed" + getFileExtName(apkPath);
         BufferedInputStream bis = null;
         try {
+            String keyStorePath = config.getKeystoreFilePath();
             String cmd = String.format("jarsigner -verbose -signedjar %s " +
-                    " %s -keystore %s -keypass %s -storepass %s %s",
-                    signedName, apkPath,"jk.keystore", "jk123456","jk123456", "jkclinic");
-            System.out.println(cmd);
+                            " %s -keystore %s -keypass %s -storepass %s %s",
+                    signedApkPath, apkPath, keyStorePath, config.getKeyPassword(), config.getStorePassword(), config.getKeyAlias());
+            if (config.isShowDetailLog()) {
+                System.out.println("jarsigner command:" + cmd);
+            }
             Process process = runtime.exec(cmd);
 
             bis = new BufferedInputStream(process.getInputStream());
-            while (bis.read() != -1) {
-                System.out.println(bis.read());
+            byte[] bytes = new byte[1024];
+            int length = -1;
+            while ((length = bis.read(bytes)) != -1) {
+                if (config.isShowDetailLog()) {
+                    System.out.print(new String(bytes, 0, length, "GBK"));
+                }
             }
             process.waitFor();
+            if (process.exitValue() == 0) {
+                System.out.println("jarsigner执行成功");
 
+                return signedApkPath;
+            } else {
+                System.out.println("jarsigner执行失败");
+
+                return null;
+            }
         } catch (Exception e) {
             e.printStackTrace();
         } finally {
             closeStreamSilence(bis);
         }
+        return null;
     }
 
-    public static void alignApk(String apkPath) {
+    public static boolean alignApk(String apkPath, boolean showDetail) {
+        boolean success = false;
+        String alignToolPath = findZipAlignTool();
+        if (alignToolPath != null && alignToolPath.length() > 0) {
+            if (!new File(apkPath).exists()) {
+                System.out.println("待对齐文件不存在");
+                return false;
+            }
 
+            Runtime runtime = Runtime.getRuntime();
+            String alignApkPath = getFileRawNameWithPath(apkPath) + "_align" + getFileExtName(apkPath);
+            File alignFile = new File(alignApkPath);
+            if (alignFile.exists()) {
+                alignFile.delete();
+            }
+            BufferedInputStream bis = null;
+            try {
+                String cmd = String.format("%s 4 %s %s", alignToolPath, apkPath, alignApkPath);
+                if (showDetail) {
+                    System.out.println("zipalign command:" + cmd);
+                }
+                Process process = runtime.exec(cmd);
+
+                bis = new BufferedInputStream(process.getInputStream());
+                byte[] bytes = new byte[1024];
+                int length = -1;
+                while ((length = bis.read(bytes)) != -1) {
+                    if (showDetail) {
+                        System.out.print(new String(bytes, 0, length, "GBK"));
+                    }
+                }
+                process.waitFor();
+
+                success = process.exitValue() == 0;
+                if (success) {
+                    System.out.println("zipalign执行成功");
+                } else {
+                    System.out.println("zipalign执行失败");
+                }
+
+            } catch (Exception e) {
+                e.printStackTrace();
+                success = false;
+
+            } finally {
+                closeStreamSilence(bis);
+            }
+        } else {
+            System.out.println("未发现zipalign.exe");
+            success = false;
+        }
+
+        return success;
     }
 
-    public static String getFileRawName(String path) {
+    private static String findZipAlignTool() {
+        String path = null;
+        String sdkPath = System.getenv("ANDROID_HOME");
+        File platformDir = new File(sdkPath + File.separator + "build-tools");
+        if (platformDir.exists() && platformDir.isDirectory()) {
+            File[] files = platformDir.listFiles();
+            if (files != null) {
+                for (File file : files) {
+                    if (file.isDirectory()) {
+                        File tool = new File(file.getPath() + File.separator + "zipalign.exe");
+                        if (tool.isFile() && tool.exists()) {
+                            path = tool.getPath();
+                            break;
+                        }
+                    }
+                }
+            }
+
+        }
+
+        return path;
+    }
+
+    public static String getFileRawNameWithPath(String path) {
         String rawName = path;
         if (path != null) {
             int index = path.lastIndexOf(".");
@@ -374,6 +589,20 @@ public class Utils {
 
         return rawName;
     }
+
+    public static String getFileRawName(String path) {
+        String rawName = null;
+
+        File file = new File(path);
+        if (file.exists()) {
+            int index = file.getName().lastIndexOf(".");
+            if (index > 0) {
+                rawName = file.getName().substring(0, index);
+            }
+        }
+        return rawName;
+    }
+
     public static String getFileExtName(String path) {
         String extName = null;
         if (path != null) {
@@ -401,6 +630,27 @@ public class Utils {
             try {
                 s.flush();
                 s.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    public static void closeReaderSilence(Reader r) {
+        if (r != null) {
+            try {
+                r.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    public static void closeWriterSilence(Writer w) {
+        if (w != null) {
+            try {
+                w.flush();
+                w.close();
             } catch (IOException e) {
                 e.printStackTrace();
             }
