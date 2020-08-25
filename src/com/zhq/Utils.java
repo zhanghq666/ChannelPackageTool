@@ -8,11 +8,24 @@ import java.io.*;
 import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.List;
+import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import java.util.zip.ZipOutputStream;
 
+/**
+ * 解压、压缩这里注意两个地方：
+ * 1、路径分隔符不用File.separate而是写死成 /
+ * 2、解压时记录哪些文件是未经压缩的，压缩回去时对这些文件同样处理成未压缩的格式STORED
+ */
 public class Utils {
+    /**
+     *
+     * @param inputDir
+     * @param outputPath
+     * @param wrapDir 是否多包含一层跟目录
+     * @throws Exception
+     */
     public static void zip(String inputDir, String outputPath, boolean wrapDir) throws Exception {
         //创建zip输出流
         ZipOutputStream out = new ZipOutputStream(new FileOutputStream(outputPath));
@@ -20,21 +33,43 @@ public class Utils {
         BufferedOutputStream bos = new BufferedOutputStream(out);
         File input = new File(inputDir);
         if (input.isFile() || wrapDir) {
-            compress(out, bos, input, null);
+            compress(out, bos, input, null, null);
         } else {
             for (File file :
                     input.listFiles()) {
-                compress(out, bos, file, file.getName());
+                compress(out, bos, file, file.getName(), null);
+            }
+        }
+        bos.close();
+        out.close();
+    }
+    /**
+     *
+     * @param inputDir
+     * @param outputPath
+     * @param wrapDir 是否多包含一层跟目录
+     * @param storedFileList 采用Stored压缩方法的文件集合
+     * @throws Exception
+     */
+    public static void zip(String inputDir, String outputPath, boolean wrapDir, ArrayList<String> storedFileList) throws Exception {
+        //创建zip输出流
+        ZipOutputStream out = new ZipOutputStream(new FileOutputStream(outputPath));
+        //创建缓冲输出流
+        BufferedOutputStream bos = new BufferedOutputStream(out);
+        File input = new File(inputDir);
+        if (input.isFile() || wrapDir) {
+            compress(out, bos, input, null, storedFileList);
+        } else {
+            for (File file :
+                    input.listFiles()) {
+                compress(out, bos, file, file.getName(), storedFileList);
             }
         }
         bos.close();
         out.close();
     }
 
-    /**
-     * @param name 压缩文件名，可以写为null保持默认
-     */
-    private static void compress(ZipOutputStream out, BufferedOutputStream bos, File input, String name) throws IOException {
+    private static void compress(ZipOutputStream out, BufferedOutputStream bos, File input, String name, ArrayList<String> storedFileList) throws IOException {
         if (name == null) {
             name = input.getName();
         }
@@ -49,12 +84,21 @@ public class Utils {
             } else//如果文件夹不为空，则递归调用compress，文件夹中的每一个文件（或文件夹）进行压缩
             {
                 for (int i = 0; i < flist.length; i++) {
-                    compress(out, bos, flist[i], name + "/" + flist[i].getName());
+                    compress(out, bos, flist[i], name + "/" + flist[i].getName(), storedFileList);
                 }
             }
         } else//如果不是目录（文件夹），即为文件，则先写入目录进入点，之后将文件写入zip文件中
         {
-            out.putNextEntry(new ZipEntry(name));
+            ZipEntry entry = new ZipEntry(name);
+            if (storedFileList != null && storedFileList.contains(name)) {
+//                System.out.println("compress got stored file:" + name);
+                entry.setMethod(ZipEntry.STORED);
+                entry.setSize(input.length());
+                entry.setCrc(checksumInputStream(input.getPath()));
+            } else {
+                entry.setMethod(ZipEntry.DEFLATED);
+            }
+            out.putNextEntry(entry);
             FileInputStream fis = new FileInputStream(input);
             BufferedInputStream bis = new BufferedInputStream(fis);
             int len;
@@ -69,7 +113,7 @@ public class Utils {
         }
     }
 
-    public static void unzip(String inputPath, String outputDir) throws Exception {
+    public static void unzip(String inputPath, String outputDir, ArrayList<String> storedFileList) throws Exception {
         File srcFile = new File(inputPath);//获取当前压缩文件
         // 判断源文件是否存在
         if (!srcFile.exists()) {
@@ -85,13 +129,17 @@ public class Utils {
         Enumeration<?> entries = zipFile.entries();
         while (entries.hasMoreElements()) {
             ZipEntry entry = (ZipEntry) entries.nextElement();
+            if (entry.getMethod() == ZipEntry.STORED) {
+//                System.out.println("unzip got stored file:" + entry.getName());
+                storedFileList.add(entry.getName());
+            }
             // 如果是文件夹，就创建个文件夹
             if (entry.isDirectory()) {
-                String dirPath = outputDir + "/" + entry.getName();
+                String dirPath = outputDir + File.separator + entry.getName();
                 new File(dirPath).mkdirs();
             } else {
                 // 如果是文件，就先创建一个文件，然后用io流把内容copy过去
-                File targetFile = new File(outputDir + "/" + entry.getName());
+                File targetFile = new File(outputDir + File.separator + entry.getName());
                 // 保证这个文件的父文件夹必须要存在
                 if (!targetFile.getParentFile().exists()) {
                     targetFile.getParentFile().mkdirs();
@@ -110,6 +158,24 @@ public class Utils {
                 is.close();
             }
         }
+    }
+
+    public static long checksumInputStream(String filepath) {
+        CRC32 crc = new CRC32();
+        InputStream inputStream = null;
+        try {
+            inputStream = new FileInputStream(filepath);
+
+            int cnt;
+            while ((cnt = inputStream.read()) != -1) {
+                crc.update(cnt);
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        } finally {
+            Utils.closeStreamSilence(inputStream);
+        }
+        return crc.getValue();
     }
 
     public static String doShield(String apkPath, ToolConfig toolConfig) {
@@ -265,7 +331,7 @@ public class Utils {
         FileInputStream fis = null;
         try {
             fis = new FileInputStream(manifestPath);
-            System.out.println("file total length:" + fis.available());
+//            System.out.println("file total length:" + fis.available());
         } catch (Exception e) {
             e.printStackTrace();
             return offsetTotal;
@@ -399,9 +465,6 @@ public class Utils {
                         case "KeyAlias":
                             config.setKeyAlias(cline[1]);
                             break;
-                        case "TargetApkPath":
-                            config.setTargetApkPath(cline[1]);
-                            break;
                         case "ChannelConfigPath":
                             config.setChannelConfigPath(cline[1]);
                             break;
@@ -534,7 +597,7 @@ public class Utils {
                 process.waitFor();
 
                 success = process.exitValue() == 0;
-                if (success) {
+                if (alignFile.exists()) {
                     System.out.println("zipalign执行成功");
                 } else {
                     System.out.println("zipalign执行失败");

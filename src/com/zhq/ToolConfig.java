@@ -12,8 +12,6 @@ public class ToolConfig {
     private String storePassword;
     private String keyAlias;
 
-    private String targetApkPath;
-
     private String channelMask;
     private String channelConfigPath;
 
@@ -68,14 +66,6 @@ public class ToolConfig {
         this.keyAlias = keyAlias;
     }
 
-    public String getTargetApkPath() {
-        return targetApkPath;
-    }
-
-    public void setTargetApkPath(String targetApkPath) {
-        this.targetApkPath = targetApkPath;
-    }
-
     public String getChannelConfigPath() {
         return channelConfigPath;
     }
@@ -109,7 +99,6 @@ public class ToolConfig {
                 ", keyPassword='" + keyPassword + '\'' +
                 ", storePassword='" + storePassword + '\'' +
                 ", keyAlias='" + keyAlias + '\'' +
-                ", targetApkPath='" + targetApkPath + '\'' +
                 ", channelMask='" + channelMask + '\'' +
                 ", channelConfigPath='" + channelConfigPath + '\'' +
                 ", showDetailLog=" + showDetailLog +

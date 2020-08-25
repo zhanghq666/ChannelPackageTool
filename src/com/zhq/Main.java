@@ -1,11 +1,7 @@
 package com.zhq;
 
-import biz.Legu;
-import net.Net;
-import util.ParamUtil;
-import util.ProxyUtil;
-
 import java.io.File;
+import java.util.ArrayList;
 import java.util.List;
 
 public class Main {
@@ -21,6 +17,7 @@ public class Main {
         // 是否打印详细信息
         boolean showDetailLog = false;
         String configFilePath = null;
+        String targetApkPath = null;
         for (int i = 0; i < args.length; i++) {
             String param = args[i];
             if ("-a".equals(param)) {
@@ -38,6 +35,13 @@ public class Main {
                         configFilePath = paramValue;
                     }
                 }
+            } else if ("-h".equals(param)) {
+                showHelp();
+                return;
+            } else {
+                if (i == args.length - 1) {
+                    targetApkPath = param;
+                }
             }
         }
 
@@ -51,8 +55,8 @@ public class Main {
         config.setShowDetailLog(showDetailLog);
 
 
-        String zipPath = config.getTargetApkPath();
-        if (!new File(zipPath).exists()) {
+        String zipPath = targetApkPath;
+        if (zipPath == null || !new File(zipPath).exists()) {
             System.out.println("目标apk文件不存在,退出执行");
             return;
         }
@@ -75,7 +79,7 @@ public class Main {
         System.out.println("开始生成渠道包...");
 
         List<ChannelConfig> channelConfigList = Utils.parseChannelConfig(config.getChannelConfigPath());
-        if (channelConfigList == null) {
+        if (channelConfigList == null || channelConfigList.isEmpty()) {
             System.out.println("渠道配置解析失败，退出执行");
             return;
         }
@@ -84,14 +88,22 @@ public class Main {
         String name = Utils.getFileRawName(zipPath);
         String ext = Utils.getFileExtName(zipPath);
         try {
-            Utils.unzip(zipPath, unzipDir);
+            ArrayList<String> storedFileList = new ArrayList<>();
+
+            Utils.unzip(zipPath, unzipDir, storedFileList);
             System.out.println("解压成功");
 
             // 删除META-INF中的签名信息，AS默认打出的包是V2签名，而后面重签名的时候将采用V1签名
             String METAPath = unzipDir + File.separator + "META-INF" + File.separator;
-            Utils.deleteFile(new File(METAPath + "MANIFEST.MF"));
-            Utils.deleteFile(new File(METAPath + "CERT.MF"));
-            Utils.deleteFile(new File(METAPath + "CERT.RSA"));
+            for (File f :
+                    new File(METAPath).listFiles()) {
+                if (f.getName().endsWith(".MF") || f.getName().endsWith("RSA")) {
+                    f.delete();
+                }
+            }
+//            Utils.deleteFile(new File(METAPath + "MANIFEST.MF"));
+//            Utils.deleteFile(new File(METAPath + "CERT.MF"));
+//            Utils.deleteFile(new File(METAPath + "CERT.RSA"));
 
             String manifestPath = unzipDir + File.separator + "AndroidManifest.xml";
             File originXml = new File(manifestPath);
@@ -108,8 +120,7 @@ public class Main {
                 return;
             }
 
-            for (ChannelConfig channelConfig :
-                    channelConfigList) {
+            for (ChannelConfig channelConfig : channelConfigList) {
 
                 Utils.modifyMetaData(originBackupPath, manifestPath, maskOffset, channelConfig.getValue());
 
@@ -120,7 +131,7 @@ public class Main {
                 }
 
                 String newZipPath = channelRawFilePath + name + "_" + channelConfig.getValue()+ "_" + channelConfig.getNameIdentify() + ext;
-                Utils.zip(unzipDir, newZipPath, false);
+                Utils.zip(unzipDir, newZipPath, false, storedFileList);
                 System.out.println("压缩成功");
 
                 String signedPath = Utils.signApk(newZipPath, config);
@@ -147,5 +158,13 @@ public class Main {
         } catch (Exception e) {
             e.printStackTrace();
         }
+    }
+
+    private static void showHelp() {
+        System.out.println("用法：java -jar channel_tool.jar [选项] 目标apk路径\n");
+        System.out.println("[-s]                启用乐固加固\n");
+        System.out.println("[-c]                启用渠道打包\n");
+        System.out.println("[-a]                同时启用乐固加固和渠道打包\n");
+        System.out.println("[-i <配置文件路径>]   配置文件路径\n");
     }
 }
