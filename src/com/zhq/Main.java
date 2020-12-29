@@ -97,7 +97,7 @@ public class Main {
             String METAPath = unzipDir + File.separator + "META-INF" + File.separator;
             for (File f :
                     new File(METAPath).listFiles()) {
-                if (f.getName().endsWith(".MF") || f.getName().endsWith("RSA")) {
+                if (f.getName().endsWith(".MF") || f.getName().endsWith(".SF") || f.getName().endsWith("RSA")) {
                     f.delete();
                 }
             }
