@@ -908,6 +908,10 @@ public class AXmlResourceParser implements XmlResourceParser {
 		return m_currentTimeReadedLength;
 	}
 
+	public StringBlock getM_strings() {
+		return m_strings;
+	}
+
 	/////////////////////////////////// data
 
 	/*
@@ -938,7 +942,7 @@ public class AXmlResourceParser implements XmlResourceParser {
 	private static final String
 		E_NOT_SUPPORTED			="Method is not supported.";
 
-	private static final int
+	public static final int
 		ATTRIBUTE_IX_NAMESPACE_URI	=0,
 		ATTRIBUTE_IX_NAME			=1,
 		ATTRIBUTE_IX_VALUE_STRING	=2,
@@ -946,7 +950,7 @@ public class AXmlResourceParser implements XmlResourceParser {
 		ATTRIBUTE_IX_VALUE_DATA		=4,
 		ATTRIBUTE_LENGHT			=5;
 
-	private static final int
+	public static final int
 		CHUNK_AXML_FILE				=0x00080003,
 		CHUNK_RESOURCEIDS			=0x00080180,
 		CHUNK_XML_FIRST				=0x00100100,

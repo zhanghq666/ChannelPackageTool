@@ -15,6 +15,8 @@
  */
 package android.content.res;
 
+import javafx.util.Pair;
+
 import java.io.IOException;
 
 /**
@@ -33,32 +35,33 @@ public class StringBlock {
 	 * Stream must be at the chunk type.
 	 */
 	public static StringBlock read(IntReader reader) throws IOException {
-		ChunkUtil.readCheckType(reader,CHUNK_TYPE);
-		int chunkOffset=reader.readInt();
-		int stringCount=reader.readInt();
-		int styleOffset=reader.readInt();
-		/*?*/reader.readInt();
-		int stringsOffset=reader.readInt();
-		int stylesOffset=reader.readInt();
-		
-		StringBlock block=new StringBlock();
-		block.m_stringOffsets=reader.readIntArray(stringCount);
-		if (styleOffset!=0) {
-			block.m_styleOffsets=reader.readIntArray(styleOffset);
+		StringBlock block = new StringBlock();
+		ChunkUtil.readCheckType(reader, CHUNK_TYPE);
+		block.chunkSize = reader.readInt();
+		block.stringCount = reader.readInt();
+		block.styleCount = reader.readInt();
+		/*?*/
+		reader.readInt();
+		block.stringPoolOffset = reader.readInt();
+		block.stylePoolOffset = reader.readInt();
+
+		block.m_stringOffsets = reader.readIntArray(block.stringCount);
+		if (block.styleCount != 0) {
+			block.m_styleOffsets = reader.readIntArray(block.styleCount);
 		}
 		{
-			int size=((stylesOffset==0)?chunkOffset:stylesOffset)-stringsOffset;
-			if ((size%4)!=0) {
-				throw new IOException("String data size is not multiple of 4 ("+size+").");
+			int size = ((block.stylePoolOffset == 0) ? block.chunkSize : block.stylePoolOffset) - block.stringPoolOffset;
+			if ((size % 4) != 0) {
+				throw new IOException("String data size is not multiple of 4 (" + size + ").");
 			}
-			block.m_strings=reader.readIntArray(size/4);
+			block.m_strings = reader.readIntArray(size / 4);
 		}
-		if (stylesOffset!=0) {
-			int size=(chunkOffset-stylesOffset);
-			if ((size%4)!=0) {
-				throw new IOException("Style data size is not multiple of 4 ("+size+").");
+		if (block.stylePoolOffset != 0) {
+			int size = (block.chunkSize - block.stylePoolOffset);
+			if ((size % 4) != 0) {
+				throw new IOException("Style data size is not multiple of 4 (" + size + ").");
 			}
-			block.m_styles=reader.readIntArray(size/4);
+			block.m_styles = reader.readIntArray(size / 4);
 		}
 
 		return block;	
@@ -77,20 +80,35 @@ public class StringBlock {
 	 * Returns raw string (without any styling information) at specified index.
 	 */
 	public String getString(int index) {
-		if (index<0 ||
-			m_stringOffsets==null ||
-			index>=m_stringOffsets.length)
-		{
+		if (index < 0 ||
+				m_stringOffsets == null ||
+				index >= m_stringOffsets.length) {
 			return null;
 		}
-		int offset=m_stringOffsets[index];
-		int length=getShort(m_strings,offset);
-		StringBuilder result=new StringBuilder(length);
-		for (;length!=0;length-=1) {
-			offset+=2;
-			result.append((char)getShort(m_strings,offset));
+		int offset = m_stringOffsets[index];
+		int length = getShort(m_strings, offset);
+		StringBuilder result = new StringBuilder(length);
+		for (; length != 0; length -= 1) {
+			offset += 2;
+			result.append((char) getShort(m_strings, offset));
 		}
 		return result.toString();
+	}
+
+	/**
+	 * 获取指定下标下的字符串的偏移量和字符数量
+	 * @param index
+	 * @return
+	 */
+	public Pair<Integer, Integer> getStringOffsetAndLength(int index) {
+		if (index < 0 ||
+				m_stringOffsets == null ||
+				index >= m_stringOffsets.length) {
+			return null;
+		}
+		int offset = m_stringOffsets[index];
+		int length = getShort(m_strings, offset);
+		return new Pair<>(offset, length);
 	}
 	
 	/**
@@ -198,48 +216,53 @@ public class StringBlock {
 	 * 	* third int is tag end index in string
 	 */
 	private int[] getStyle(int index) {
-		if (m_styleOffsets==null || m_styles==null ||
-			index>=m_styleOffsets.length)
-		{
+		if (m_styleOffsets == null || m_styles == null ||
+				index >= m_styleOffsets.length) {
 			return null;
 		}
-		int offset=m_styleOffsets[index]/4;
+		int offset = m_styleOffsets[index] / 4;
 		int style[];
 		{
-			int count=0;
-			for (int i=offset;i<m_styles.length;++i) {
-				if (m_styles[i]==-1) {
+			int count = 0;
+			for (int i = offset; i < m_styles.length; ++i) {
+				if (m_styles[i] == -1) {
 					break;
 				}
-				count+=1;
+				count += 1;
 			}
-			if (count==0 || (count%3)!=0) {
+			if (count == 0 || (count % 3) != 0) {
 				return null;
 			}
-			style=new int[count];
+			style = new int[count];
 		}
-		for (int i=offset,j=0;i<m_styles.length;) {
-			if (m_styles[i]==-1) {
+		for (int i = offset, j = 0; i < m_styles.length; ) {
+			if (m_styles[i] == -1) {
 				break;
 			}
-			style[j++]=m_styles[i++];
+			style[j++] = m_styles[i++];
 		}
 		return style;
 	}
-	
-	private static final int getShort(int[] array,int offset) {
-		int value=array[offset/4];
-		if ((offset%4)/2==0) {
+
+	private static int getShort(int[] array, int offset) {
+		int value = array[offset / 4];
+		if ((offset % 4) / 2 == 0) {
 			return (value & 0xFFFF);
 		} else {
 			return (value >>> 16);
 		}
 	}
 
-	private int[] m_stringOffsets;
-	private int[] m_strings;
+	public int chunkSize;
+	public int stringCount;
+	public int styleCount;
+	public int stringPoolOffset;
+	public int stylePoolOffset;
+
+	public int[] m_stringOffsets;
+	public int[] m_strings;
 	private int[] m_styleOffsets;
 	private int[] m_styles;
 
-	private static final int CHUNK_TYPE=0x001C0001;
+	private static final int CHUNK_TYPE = 0x001C0001;
 }

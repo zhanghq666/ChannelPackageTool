@@ -1,16 +1,7 @@
 package com.zhq;
 
 public class ChannelConfig {
-    private String nameIdentify;
     private String value;
-
-    public String getNameIdentify() {
-        return nameIdentify;
-    }
-
-    public void setNameIdentify(String nameIdentify) {
-        this.nameIdentify = nameIdentify;
-    }
 
     public String getValue() {
         return value;
@@ -23,8 +14,7 @@ public class ChannelConfig {
     @Override
     public String toString() {
         return "ChannelConfig{" +
-                "nameIdentify='" + nameIdentify + '\'' +
-                ", value='" + value + '\'' +
+                "value='" + value + '\'' +
                 '}';
     }
 }

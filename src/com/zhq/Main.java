@@ -95,8 +95,8 @@ public class Main {
 
             // 删除META-INF中的签名信息，AS默认打出的包是V2签名，而后面重签名的时候将采用V1签名
             String METAPath = unzipDir + File.separator + "META-INF" + File.separator;
-            for (File f :
-                    new File(METAPath).listFiles()) {
+            File metaDia = new File(METAPath);
+            for (File f : metaDia.listFiles()) {
                 if (f.getName().endsWith(".MF") || f.getName().endsWith(".SF") || f.getName().endsWith("RSA")) {
                     f.delete();
                 }
@@ -113,40 +113,44 @@ public class Main {
                 return;
             }
 
-            int maskOffset = Utils.findOffset(originBackupPath, config.getChannelMask());
-            System.out.println("find mask offset " + maskOffset);
-            if (maskOffset <= 0) {
-                System.out.println("查找关键字失败，退出执行");
+            XmlInfo xmlInfo = Utils.findTargetAttributeOffset(originBackupPath, config.getChannelMask());
+            if (xmlInfo == null) {
+                System.out.println("解析原xml失败，退出执行");
                 return;
             }
+            System.out.println("find attribute offset " + xmlInfo.targetAttributeOffset);
 
             for (ChannelConfig channelConfig : channelConfigList) {
 
-                Utils.modifyMetaData(originBackupPath, manifestPath, maskOffset, channelConfig.getValue());
+                boolean modifySuccess = Utils.modifyMetaData(originBackupPath, manifestPath, xmlInfo, channelConfig.getValue());
+                if (modifySuccess) {
 
-                String channelRawFilePath = new File(zipPath).getParent() + File.separator + "ChannelRaw" + File.separator;
-                File channelRawDir = new File(channelRawFilePath);
-                if (!channelRawDir.exists()) {
-                    channelRawDir.mkdirs();
-                }
+                    String channelRawFilePath = new File(zipPath).getParent() + File.separator + "ChannelRaw" + File.separator;
+                    File channelRawDir = new File(channelRawFilePath);
+                    if (!channelRawDir.exists()) {
+                        channelRawDir.mkdirs();
+                    }
 
-                String newZipPath = channelRawFilePath + name + "_" + channelConfig.getValue()+ "_" + channelConfig.getNameIdentify() + ext;
-                Utils.zip(unzipDir, newZipPath, false, storedFileList);
-                System.out.println("压缩成功");
+                    String newZipPath = channelRawFilePath + name + "_" + channelConfig.getValue() + ext;
+                    Utils.zip(unzipDir, newZipPath, false, storedFileList);
+                    System.out.println("压缩成功");
 
-                String signedPath = Utils.signApk(newZipPath, config);
-                if (signedPath != null && signedPath.length() > 0) {
-                    System.out.println("签名成功");
-                    new File(newZipPath).delete();
+                    String signedPath = Utils.signApk(newZipPath, config);
+                    if (signedPath != null && signedPath.length() > 0) {
+                        System.out.println("签名成功");
+                        new File(newZipPath).delete();
 
-                    if (Utils.alignApk(signedPath, showDetailLog)) {
-                        System.out.println("对齐成功");
-                        new File(signedPath).delete();
+                        if (Utils.alignApk(signedPath, showDetailLog)) {
+                            System.out.println("对齐成功");
+                            new File(signedPath).delete();
+                        } else {
+                            System.out.println("对齐失败，退出本轮执行");
+                        }
                     } else {
-                        System.out.println("对齐失败，退出本轮执行");
+                        System.out.println("签名失败，退出本轮执行");
                     }
                 } else {
-                    System.out.println("签名失败，退出本轮执行");
+                    System.out.println("修改渠道信息失败，退出本轮执行");
                 }
 
                 System.out.println("----------------------");

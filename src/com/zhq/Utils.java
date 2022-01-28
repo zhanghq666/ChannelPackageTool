@@ -1,7 +1,10 @@
 package com.zhq;
 
 import android.content.res.AXmlResourceParser;
+import android.content.res.StringBlock;
 import android.util.TypedValue;
+import com.sun.istack.internal.NotNull;
+import javafx.util.Pair;
 import org.xmlpull.v1.XmlPullParser;
 
 import java.io.*;
@@ -19,6 +22,8 @@ import java.util.zip.ZipOutputStream;
  * 2、解压时记录哪些文件是未经压缩的，压缩回去时对这些文件同样处理成未压缩的格式STORED
  */
 public class Utils {
+    public final static int BYTEMASK = 0xFF; // 8 bits
+
     /**
      *
      * @param inputDir
@@ -225,38 +230,216 @@ public class Utils {
         }
     }
 
-    public static boolean modifyMetaData(String backupFilePath, String outputFilePath, int maskOffset, String valueReal) {
-
-        System.out.println("开始修改xml");
-
-        System.out.println("for " + valueReal);
+    private static byte[] readRawXml(String xmlPath) {
+        byte[] rawXmlBytes = null;
+        int readLength = -1;
         FileInputStream fis = null;
-        FileOutputStream fos = null;
         try {
-            fis = new FileInputStream(backupFilePath);
-            fos = new FileOutputStream(outputFilePath);
-
-            byte[] bytes = new byte[1];
-            int offset = 0;
-            while (fis.read(bytes) != -1) {
-                if (maskOffset == offset) {
-                    int valueRealInt = Integer.parseInt(valueReal);
-                    byte[] valueB = intToByteArray(valueRealInt);
-                    fos.write(valueB);
-                    fis.skip(valueB.length - 1);
-                } else {
-                    fos.write(bytes);
-                }
-                offset++;
-            }
+            fis = new FileInputStream(xmlPath);
+            rawXmlBytes = new byte[fis.available()];
+            readLength = fis.read(rawXmlBytes);
         } catch (Exception e) {
             e.printStackTrace();
-            return false;
+            return null;
         } finally {
             try {
                 if (fis != null) {
                     fis.close();
                 }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+        if (readLength < 0) {
+            return null;
+        }
+        return rawXmlBytes;
+    }
+
+    /**
+     * 替换用新值替换指定位置上的老值。这里要区分写入的新值是整型还是字符串。
+     * 整型
+     * 整型的替换比较简单，直接在XmlContentChunk上替换原位置上的值为valueReal就行
+     * 字符串
+     *  字符串类型的替换步骤：
+     *  1. 修改文件的FileSize为 原值 + [valueReal Length + 2] + 4
+     *  2. 修改StringTrunk的ChunkSize为 原值 + [valueReal Length + 2] + 4
+     *  3. 修改StringTrunk的StringCount为 原值 + 1
+     *  4. 修改StringTrunk的StringPoolOffset为 原值 + 4
+     *  5. 修改StringTrunk的StylePoolOffset为 原值 + [valueReal Length + 2] + 4
+     *  6. 在StringTrunk的StringOffsets的末尾位置写入新增的字符串的offset
+     *  7. 在StringTrunk的StringPool的末尾位置写入新增的字符串valueReal
+     *  8. 修改在XmlContentChunk上替换原位置上的值为新增的字符串的offset
+     * @param backupFilePath
+     * @param outputFilePath
+     * @param xmlInfo
+     * @param valueReal
+     * @return
+     */
+    public static boolean modifyMetaData(String backupFilePath, String outputFilePath, XmlInfo xmlInfo, String valueReal) {
+
+        System.out.println("开始修改xml");
+        System.out.println("for " + valueReal);
+
+        final byte[] rawXmlBytes = readRawXml(backupFilePath);
+
+        if (rawXmlBytes == null) {
+            return false;
+        }
+
+        FileOutputStream fos = null;
+        try {
+            fos = new FileOutputStream(outputFilePath);
+
+            int valueRealInt = 0;
+            boolean isIntValue = false;
+            try {
+                valueRealInt = Integer.parseInt(valueReal);
+                isIntValue = true;
+            } catch (NumberFormatException e) {
+                System.out.println("valueReal不是整型，将作为字符串处理");
+            }
+
+            int rawXmlOffset = 0;         //rawXmlBytes读取的当前偏移量
+            int replacedXmlValue = 0;        //需要替换的xml中的值
+            if (isIntValue) {
+                replacedXmlValue = valueRealInt;
+            } else {
+                replacedXmlValue = xmlInfo.stringCount;
+
+                // 写入MagicNumber、FileSize和StringChunk部分
+
+                byte[] valueRealBytes = getStringBytesInBlock(valueReal);
+                int valueRealLength = valueRealBytes.length;
+
+                //MagicNumber
+                fos.write(rawXmlBytes, rawXmlOffset, 4);
+                rawXmlOffset += 4;
+
+                //FileSize
+                int fileSize = bytesToInt(rawXmlBytes, false, rawXmlOffset);
+                int newFileSize = fileSize + valueRealLength + 4;
+                fos.write(intToByteArray(newFileSize));
+                rawXmlOffset += 4;
+
+                //StringTrunk
+                //TrunkType
+                fos.write(rawXmlBytes, rawXmlOffset, 4);
+                rawXmlOffset += 4;
+                //TrunkSize
+                int newTrunkSize = xmlInfo.stringTrunkSize + valueRealLength + 4;
+                fos.write(intToByteArray(newTrunkSize));
+                rawXmlOffset += 4;
+                //StringCount
+                int newStringCount = xmlInfo.stringCount + 1;
+                fos.write(intToByteArray(newStringCount));
+                rawXmlOffset += 4;
+                //StyleCount
+                fos.write(rawXmlBytes, rawXmlOffset, 4);
+                rawXmlOffset += 4;
+                //Unknown
+                fos.write(rawXmlBytes, rawXmlOffset, 4);
+                rawXmlOffset += 4;
+                //StringPoolOffset
+                int newStringPoolOffset = xmlInfo.stringPoolOffset + 4;
+                fos.write(intToByteArray(newStringPoolOffset));
+                rawXmlOffset += 4;
+                //StylePoolOffset
+                if (xmlInfo.stylePoolOffset > 0) {
+                    int newStylePoolOffset = xmlInfo.stylePoolOffset + valueRealLength + 4;
+                    fos.write(intToByteArray(newStylePoolOffset));
+                } else {
+                    fos.write(rawXmlBytes, rawXmlOffset, 4);
+                }
+                rawXmlOffset += 4;
+
+                //StringOffsets
+                int len = 0;
+                if (xmlInfo.stringCount > 0) {
+                    len = xmlInfo.stringCount * 4;
+                    fos.write(rawXmlBytes, rawXmlOffset, len);
+                    rawXmlOffset += len;
+                }
+                // 写入新增的string的偏移量
+                fos.write(intToByteArray(xmlInfo.newStringOffset));
+
+                //StyleOffsets
+                if (xmlInfo.styleCount > 0) {
+                    len = xmlInfo.styleCount * 4;
+
+                    fos.write(rawXmlBytes, rawXmlOffset, len);
+                    rawXmlOffset += len;
+                }
+
+                //StringPool
+                if (xmlInfo.stringCount > 0) {
+                    len = ((xmlInfo.stylePoolOffset == 0) ? xmlInfo.stringTrunkSize : xmlInfo.stylePoolOffset) - xmlInfo.stringPoolOffset;
+                    fos.write(rawXmlBytes, rawXmlOffset, len);
+                    rawXmlOffset += len;
+
+                    fos.write(valueRealBytes);
+                }
+
+                //StylePool
+                if (xmlInfo.styleCount > 0) {
+                    len = xmlInfo.stringTrunkSize - rawXmlOffset;
+                    fos.write(rawXmlBytes, rawXmlOffset, len);
+                    rawXmlOffset += len;
+                }
+            }
+
+            // 写入余下的ResourceTrunk和XmlContentChunk部分（对整型替换值来说，所有Trunk都是在这之后写入），并在XmlContentChunk部分替换maskOffset位置上的值
+            // 写属性之前的部分
+            fos.write(rawXmlBytes, rawXmlOffset, xmlInfo.targetAttributeOffset - rawXmlOffset);
+            rawXmlOffset = xmlInfo.targetAttributeOffset;
+
+            // 修改属性中特定部分
+            byte[] valueBytes = intToByteArray(replacedXmlValue);
+            int oldValueType = bytesToInt(rawXmlBytes, false, rawXmlOffset + 4 * 3);
+            if (isIntValue) {
+                if (oldValueType == TypedValue.TYPE_STRING) {
+                    // 原来是字符串，现在是整型
+                    fos.write(rawXmlBytes, rawXmlOffset, 2 * 4);
+                    rawXmlOffset += 8;
+
+                    fos.write(intToByteArray(-1));
+                    rawXmlOffset += 4;
+
+                    fos.write(intToByteArray(TypedValue.TYPE_FIRST_INT));
+                    rawXmlOffset += 4;
+
+                } else {
+                    // 原来是整型，现在也是整型
+                    fos.write(rawXmlBytes, rawXmlOffset, 4 * 4);
+                    rawXmlOffset += 16;
+
+                }
+
+                fos.write(valueBytes);
+                rawXmlOffset += 4;
+            } else {
+
+                fos.write(rawXmlBytes, rawXmlOffset, 2 * 4);
+                rawXmlOffset += 8;
+
+                fos.write(valueBytes);
+                rawXmlOffset += 4;
+
+                fos.write(intToByteArray(TypedValue.TYPE_STRING));
+                rawXmlOffset += 4;
+
+                fos.write(valueBytes);
+                rawXmlOffset += 4;
+            }
+
+            // 写属性之后的部分
+            fos.write(rawXmlBytes, rawXmlOffset, rawXmlBytes.length - rawXmlOffset);
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            return false;
+        } finally {
+            try {
                 if (fos != null) {
                     fos.flush();
                     fos.close();
@@ -268,6 +451,22 @@ public class Utils {
 
         System.out.println("修改完毕");
         return true;
+    }
+
+    private static byte[] getStringBytesInBlock(String value) {
+        int len = 2 + value.length() * 2 + 2;
+        byte[] bytes = new byte[len];
+//        Arrays.fill(bytes, (byte) 0);
+        int offset = 0;
+        encodeIntLittleEndian(bytes, value.length(), offset, 2);
+        offset += 2;
+
+        char[] cs = value.toCharArray();
+        for (int i = 0; i < cs.length; i++) {
+            encodeIntLittleEndian(bytes, cs[i], offset, 2);
+            offset += 2;
+        }
+        return bytes;
     }
 
     public static boolean backupManifest(String xmlPath, File originXml, String originBackupPath) {
@@ -320,25 +519,24 @@ public class Utils {
     }
 
     /**
-     * 找到目的属性值得偏移字节量
+     * 找到目的属性值的偏移字节量
      *
      * @param manifestPath
-     * @param valueMask
+     * @param attributeValueMask
      * @return
      */
-    public static int findOffset(String manifestPath, String valueMask) {
-        int offsetTotal = -1;
+    public static XmlInfo findTargetAttributeOffset(String manifestPath, @NotNull String attributeValueMask) {
         FileInputStream fis = null;
         try {
             fis = new FileInputStream(manifestPath);
 //            System.out.println("file total length:" + fis.available());
         } catch (Exception e) {
             e.printStackTrace();
-            return offsetTotal;
+            return null;
         }
 
-
-        boolean foundTarget = false;
+        XmlInfo xmlInfo = null;
+        int attributeOffset = -1;
         int eventType = -1;
         AXmlResourceParser parser = new AXmlResourceParser();
         try {
@@ -350,28 +548,44 @@ public class Utils {
                 }
                 if (eventType == XmlPullParser.START_TAG && "meta-data".equals(parser.getName()) && parser.getAttributeCount() > 0) {
                     for (int i = 0; i < parser.getAttributeCount(); i++) {
-                        if (valueMask.equals(parser.getAttributeValue(i))) {
-                            foundTarget = true;
+                        if (attributeValueMask.equals(parser.getAttributeValue(i))) {
                             System.out.println(parser.getAttributeValue(i) + ":");
 
+                            // 这里假定了value属性一定在name属性之后，从目前的的观察来看，AS打出来的包也确实会强制将value放在name之后。
                             int valueIndex = i + 1;
-                            int valueType = parser.getAttributeValueType(valueIndex);
-                            if (valueType >= TypedValue.TYPE_FIRST_INT &&
-                                    valueType <= TypedValue.TYPE_LAST_INT) {
-                                // ATTRIBUTE_LENGTH为5
-                                // 计算目标AttributeValue在整个文档中的偏移量
-                                // 偏移量 = 当前已读取的字节数 - ((属性倒序位置 * 每个属性所占Int数) - 属性值所在位置) * Int类型字节数
-                                offsetTotal = parser.getCurrentOffset() - ((parser.getAttributeCount() - valueIndex) * 5 - 4) * 4;
-
-                                System.out.println(parser.getAttributeIntValue(valueIndex, -1));
-                            } else {
-                                System.out.println("不支持的值类型！！！");
-                            }
+                            attributeOffset = parser.getCurrentOffset() - (parser.getAttributeCount() - valueIndex) * AXmlResourceParser.ATTRIBUTE_LENGHT * 4;
+//                            int valueType = parser.getAttributeValueType(valueIndex);
+//                            if ((valueType >= TypedValue.TYPE_FIRST_INT &&
+//                                    valueType <= TypedValue.TYPE_LAST_INT) ||
+//                                    valueType == TypedValue.TYPE_STRING) {
+//                                // ATTRIBUTE_LENGTH为5
+//                                // 计算目标AttributeValue在整个文档中的偏移量
+//                                // 偏移量 = 当前已读取的字节数 - ((属性倒序位置 * 每个属性所占Int数) - 属性值所在位置) * Int类型字节数
+//                                offsetTotal = parser.getCurrentOffset() - ((parser.getAttributeCount() - valueIndex) * 5 - 4) * 4;
+//
+//                                System.out.println("OriginCode is int ? " + parser.getAttributeIntValue(valueIndex, -1));
+//                                System.out.println("OriginCode is string ? " + parser.getAttributeValue(valueIndex));
+//                            } else {
+//                                System.out.println("不支持的值类型！！！");
+//                            }
                             break;
                         }
                     }
 
-                    if (foundTarget) {
+                    if (attributeOffset > 0) {
+                        xmlInfo = new XmlInfo();
+                        xmlInfo.targetAttributeOffset = attributeOffset;
+                        StringBlock sb = parser.getM_strings();
+                        Pair<Integer, Integer> pair = sb.getStringOffsetAndLength(sb.getCount() - 1);
+                        if (pair != null) {
+                            // 上一个字符串的起始位置 + 上一个字符串长度 * 2 + 长度本身所占字节数 + 分隔符字节数
+                            xmlInfo.newStringOffset = pair.getKey() + pair.getValue() * 2 + 2 + 2;
+                        }
+                        xmlInfo.stringTrunkSize = sb.chunkSize;
+                        xmlInfo.stringCount = sb.stringCount;
+                        xmlInfo.styleCount = sb.styleCount;
+                        xmlInfo.stringPoolOffset = sb.stringPoolOffset;
+                        xmlInfo.stylePoolOffset = sb.stylePoolOffset;
                         break;
                     }
                 }
@@ -380,12 +594,12 @@ public class Utils {
         } catch (Exception e) {
             e.printStackTrace();
         } finally {
-            if (foundTarget || eventType == XmlPullParser.END_DOCUMENT) {
+            if (attributeOffset > 0 || eventType == XmlPullParser.END_DOCUMENT) {
                 parser.close();
             }
         }
 
-        return offsetTotal;
+        return xmlInfo;
     }
 
     /**
@@ -410,7 +624,35 @@ public class Utils {
             result[3] = (byte) ((i >> 24) & 0xFF);
         }
         return result;
+    }
 
+    public static int encodeIntLittleEndian(byte[] dst, long val, int offset, int size) {
+        for (int i = 0; i < size; i++) {
+            dst[offset++] = (byte) (val >> (i * Byte.SIZE));
+        }
+        return offset;
+    }
+
+    public static int decodeIntLittleEndian(byte[] val, int offset, int size) {
+        long rtn = 0;
+        for (int i = size - 1; i >= 0; i++) {
+            rtn = (rtn << Byte.SIZE) | ((long) val[offset + i] & BYTEMASK);
+        }
+        return (int) rtn;
+    }
+
+    private static int bytesToInt(byte[] bytes, boolean isBigEndian, int offset) {
+        long result = 0;
+        if (isBigEndian) {
+            for (int i = 0; i < 4; i++) {
+                result = (result << Byte.SIZE) | ((long) bytes[offset + i] & BYTEMASK);
+            }
+        } else {
+            for (int i = 3; i >= 0; i--) {
+                result = (result << Byte.SIZE) | ((long) bytes[offset + i] & BYTEMASK);
+            }
+        }
+        return (int) result;
     }
 
     public static boolean deleteFile(File fileRoot) {
@@ -493,20 +735,9 @@ public class Utils {
             bufferedReader = new BufferedReader(reader);
             String line;
             while ((line = bufferedReader.readLine()) != null) {
-                String[] cline = line.split(",");
-                if (cline.length >= 2) {
-                    if (cline[0] != null) {
-                        cline[0] = cline[0].trim();
-                    }
-                    if (cline[1] != null) {
-                        cline[1] = cline[1].trim();
-                    }
-
-                    ChannelConfig config = new ChannelConfig();
-                    config.setNameIdentify(cline[0]);
-                    config.setValue(cline[1]);
-                    channelConfigs.add(config);
-                }
+                ChannelConfig config = new ChannelConfig();
+                config.setValue(line.trim());
+                channelConfigs.add(config);
             }
         } catch (IOException e) {
             e.printStackTrace();
