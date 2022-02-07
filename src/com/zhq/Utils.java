@@ -9,6 +9,7 @@ import org.xmlpull.v1.XmlPullParser;
 
 import java.io.*;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Enumeration;
 import java.util.List;
 import java.util.zip.CRC32;
@@ -307,10 +308,17 @@ public class Utils {
             } else {
                 replacedXmlValue = xmlInfo.stringCount;
 
-                // 写入MagicNumber、FileSize和StringChunk部分
-
+                int oldStringPoolRealLen = ((xmlInfo.stylePoolOffset == 0) ? xmlInfo.stringTrunkSize : xmlInfo.stylePoolOffset) - xmlInfo.stringPoolOffset - xmlInfo.stringPoolAlignBytesCount;
                 byte[] valueRealBytes = getStringBytesInBlock(valueReal);
                 int valueRealLength = valueRealBytes.length;
+                if ((oldStringPoolRealLen + valueRealLength) % 4 != 0) {
+                    System.out.println("为使StringPool以4字节对齐，将在StringPool结尾额外补上2个空字节");
+                    valueRealBytes = Arrays.copyOf(valueRealBytes, valueRealLength + 2);
+                    valueRealLength = valueRealBytes.length;
+                }
+                valueRealLength -= xmlInfo.stringPoolAlignBytesCount;
+
+                // 写入MagicNumber、FileSize和StringChunk部分
 
                 //MagicNumber
                 fos.write(rawXmlBytes, rawXmlOffset, 4);
@@ -373,9 +381,9 @@ public class Utils {
 
                 //StringPool
                 if (xmlInfo.stringCount > 0) {
-                    len = ((xmlInfo.stylePoolOffset == 0) ? xmlInfo.stringTrunkSize : xmlInfo.stylePoolOffset) - xmlInfo.stringPoolOffset;
-                    fos.write(rawXmlBytes, rawXmlOffset, len);
-                    rawXmlOffset += len;
+
+                    fos.write(rawXmlBytes, rawXmlOffset, oldStringPoolRealLen);
+                    rawXmlOffset += oldStringPoolRealLen + xmlInfo.stringPoolAlignBytesCount;
 
                     fos.write(valueRealBytes);
                 }
@@ -395,7 +403,7 @@ public class Utils {
 
             // 修改属性中特定部分
             byte[] valueBytes = intToByteArray(replacedXmlValue);
-            int oldValueType = bytesToInt(rawXmlBytes, false, rawXmlOffset + 4 * 3);
+            int oldValueType = bytesToInt(rawXmlBytes, false, rawXmlOffset + 4 * 3) >> 24;
             if (isIntValue) {
                 if (oldValueType == TypedValue.TYPE_STRING) {
                     // 原来是字符串，现在是整型
@@ -405,7 +413,7 @@ public class Utils {
                     fos.write(intToByteArray(-1));
                     rawXmlOffset += 4;
 
-                    fos.write(intToByteArray(TypedValue.TYPE_FIRST_INT));
+                    fos.write(intToByteArray(0x10000008/*TypedValue.TYPE_FIRST_INT*/));
                     rawXmlOffset += 4;
 
                 } else {
@@ -425,7 +433,7 @@ public class Utils {
                 fos.write(valueBytes);
                 rawXmlOffset += 4;
 
-                fos.write(intToByteArray(TypedValue.TYPE_STRING));
+                fos.write(intToByteArray(0x03000008/*TypedValue.TYPE_STRING*/));
                 rawXmlOffset += 4;
 
                 fos.write(valueBytes);
@@ -549,7 +557,7 @@ public class Utils {
                 if (eventType == XmlPullParser.START_TAG && "meta-data".equals(parser.getName()) && parser.getAttributeCount() > 0) {
                     for (int i = 0; i < parser.getAttributeCount(); i++) {
                         if (attributeValueMask.equals(parser.getAttributeValue(i))) {
-                            System.out.println(parser.getAttributeValue(i) + ":");
+//                            System.out.println(parser.getAttributeValue(i) + ":");
 
                             // 这里假定了value属性一定在name属性之后，从目前的的观察来看，AS打出来的包也确实会强制将value放在name之后。
                             int valueIndex = i + 1;
@@ -586,6 +594,7 @@ public class Utils {
                         xmlInfo.styleCount = sb.styleCount;
                         xmlInfo.stringPoolOffset = sb.stringPoolOffset;
                         xmlInfo.stylePoolOffset = sb.stylePoolOffset;
+                        xmlInfo.stringPoolAlignBytesCount = ((xmlInfo.stylePoolOffset == 0) ? xmlInfo.stringTrunkSize : xmlInfo.stylePoolOffset) - xmlInfo.newStringOffset - xmlInfo.stringPoolOffset;
                         break;
                     }
                 }

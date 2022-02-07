@@ -29,24 +29,24 @@ public class TypedValue {
     public int changingConfigurations;
 	
     public static final int 
-    	TYPE_NULL				=0,
-    	TYPE_REFERENCE			=1,
-    	TYPE_ATTRIBUTE			=2,
-    	TYPE_STRING				=3,
-    	TYPE_FLOAT				=4,
-    	TYPE_DIMENSION			=5,
-    	TYPE_FRACTION			=6,
-    	TYPE_FIRST_INT			=16,
-    	TYPE_INT_DEC			=16,
-    	TYPE_INT_HEX			=17,
-    	TYPE_INT_BOOLEAN		=18,
-    	TYPE_FIRST_COLOR_INT	=28,
-    	TYPE_INT_COLOR_ARGB8	=28,
-    	TYPE_INT_COLOR_RGB8		=29,
-    	TYPE_INT_COLOR_ARGB4	=30,
-    	TYPE_INT_COLOR_RGB4		=31,
-    	TYPE_LAST_COLOR_INT		=31,
-    	TYPE_LAST_INT			=31;
+    	TYPE_NULL				=0x00,
+    	TYPE_REFERENCE			=0x01,
+    	TYPE_ATTRIBUTE			=0x02,
+    	TYPE_STRING				=0x03,
+    	TYPE_FLOAT				=0x04,
+    	TYPE_DIMENSION			=0x05,
+    	TYPE_FRACTION			=0x06,
+    	TYPE_FIRST_INT			=0x10,
+    	TYPE_INT_DEC			=0x10,
+    	TYPE_INT_HEX			=0x11,
+    	TYPE_INT_BOOLEAN		=0x12,
+    	TYPE_FIRST_COLOR_INT	=0x1C,
+    	TYPE_INT_COLOR_ARGB8	=0x1C,
+    	TYPE_INT_COLOR_RGB8		=0x1D,
+    	TYPE_INT_COLOR_ARGB4	=0x1E,
+    	TYPE_INT_COLOR_RGB4		=0x1F,
+    	TYPE_LAST_COLOR_INT		=0x1F,
+    	TYPE_LAST_INT			=0x1F;
     
     public static final int
 	    COMPLEX_UNIT_PX			=0,
